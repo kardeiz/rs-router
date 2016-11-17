@@ -7,12 +7,11 @@ extern crate lazy_static;
 
 use std::io::Read;
 
-use hyper::server::{Server, Request, Response, Handler};
-use regex::Regex;
-use rs_router::{Router, utils as rs_utils};
+use hyper::server::{Server, Response};
+use rs_router::{Router, Request};
 
-fn digit_handler(req: Request, res: Response, regex: &Regex) {
-    let digits = regex.captures(rs_utils::extract_path(&req.uri))
+fn digit_handler(req: Request, res: Response) {
+    let digits = req.captures()
         .and_then(|c| c.at(1) )
         .unwrap();
     if digits.len() > 5 {
@@ -22,15 +21,19 @@ fn digit_handler(req: Request, res: Response, regex: &Regex) {
     }
 }
 
-fn body_handler(mut req: Request, res: Response, _: &Regex) {
+fn body_handler(mut req: Request, res: Response) {
     let mut body = String::new();
     let _ = req.read_to_string(&mut body);
     res.send(body.as_bytes()).unwrap();
 }
 
 fn not_found(req: Request, res: Response) {
-    let uri = format!("{}", req.uri);
-    let message = format!("why you calling {}?", uri);
+    let uri = format!("URI: {}", req.uri);
+    let query = format!("QUERY: {:?}", req.query());
+    let message = format!("why you calling {} {}?", uri, query);
+
+
+
     res.send(message.as_bytes()).unwrap();
 }
 
@@ -55,8 +58,8 @@ fn main() {
     };
 
     let router = Router::build()
-        .add_get(r"/(\d+)", digit_handler)
-        .add_post(r"/body", body_handler)
+        .add_get(r"\A/(\d+)\z", digit_handler)
+        .add_post(r"\A/body\z", body_handler)
         .not_found(not_found)
         .finish()
         .unwrap();

@@ -1,4 +1,4 @@
-#![feature(question_mark)]
+// #![feature(question_mark)]
 
 extern crate regex;
 extern crate hyper;
@@ -29,71 +29,112 @@ pub mod err {
     pub type Result<T> = ::std::result::Result<T, Error>;
 }
 
-use regex::{Regex, RegexSet};
+use regex::{Regex, RegexSet, Captures};
 
-use hyper::server::{Handler, Request, Response};
+use hyper::server::{Handler, Response, Request as HyperRequest};
 use hyper::method::Method;
+use hyper::uri::RequestUri;
 
-// pub struct UriParts<'a> {
-//     pub path: &'a str,
-//     pub query: Option<&'a str>
-// }
 
-// impl<'a> UriParts<'a> {
-//     pub fn new(path: &'a str, query: Option<&'a str>) -> Self {
-//         UriParts { path: path, query: query }
-//     }
-// }
+use std::ops::{Deref, DerefMut};
+use std::convert::From;
+use std::cell::Cell;
 
-// pub struct Route<'a> {
-//     uri_parts: UriParts<'a>,
-//     regex: &'a Regex
-// }
 
-pub trait InnerHandler: Send + Sync {
-    fn handle<'a, 'k>(&'a self, Request<'a, 'k>, Response<'a>, &'a Regex);
-
+pub struct Request<'a, 'b: 'a, 'c> {
+    inner: HyperRequest<'a, 'b>,
+    delims: Cell<Option<(usize, Option<usize>)>>,
+    regex_match: Option<&'c Regex>
 }
 
-impl<F> InnerHandler for F where F: for<'c> Fn(Request, Response, &'c Regex) + Sync + Send {
-    fn handle<'a, 'k>(&'a self, 
-        req: Request<'a, 'k>, 
-        res: Response<'a>,
-        regex: &'a Regex) {
-        self(req, res, regex)
+
+impl<'a, 'b: 'a, 'c> Deref for Request<'a, 'b, 'c> {
+    type Target = HyperRequest<'a, 'b>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }
 
-pub mod utils {
+impl<'a, 'b: 'a, 'c> DerefMut for Request<'a, 'b, 'c> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
 
-    // use super::UriParts;
-    use hyper::uri::RequestUri;
+impl<'a, 'b: 'a, 'c> From<HyperRequest<'a, 'b>> for Request<'a, 'b, 'c> {
 
-    pub fn extract_path(uri: &RequestUri) -> &str {
-        match *uri {
-            RequestUri::AbsolutePath(ref s) => {                
-                s.find('?').map(|pos| &s[..pos] ).unwrap_or(&s[..])
+    fn from(x: HyperRequest<'a, 'b>) -> Self {
+        Request {
+            inner: x,
+            delims: Cell::new(None),
+            regex_match: None
+        }
+    }
+}
+
+impl<'a, 'b: 'a, 'c> Request<'a, 'b, 'c> {
+
+    fn with_regex(mut self, regex: &'c Regex) -> Self {
+        self.regex_match = Some(regex);
+        self
+    }
+
+    pub fn path(&self) -> &str {
+        match self.inner.uri {
+            RequestUri::AbsolutePath(ref s) => {
+                if let Some((pos, _)) = self.delims.get() {
+                    &s[..pos]
+                } else {
+                    let delims = s.find('?')
+                        .map(|pos| (pos, Some(pos + 1)))
+                        .unwrap_or((s.len(), None));
+                    self.delims.set(Some(delims));
+                    &s[..delims.0]
+                }
             },
             RequestUri::AbsoluteUri(ref url) => url.path(),
             _ => panic!("Unexpected request URI")
         }
     }
 
-    // pub fn extract_parts(uri: &RequestUri) -> UriParts {
-    //     match *uri {            
-    //         ::hyper::uri::RequestUri::AbsolutePath(ref s) => {                
-    //             if let Some(pos) = s.find('?') {
-    //                 UriParts::new(&s[..pos], Some(&s[pos+1..]))
-    //             } else {
-    //                 UriParts::new(&s[..], None)
-    //             }
-    //         },
-    //         ::hyper::uri::RequestUri::AbsoluteUri(ref url) => {
-    //             UriParts::new(url.path(), url.query())
-    //         },
-    //         _ => panic!("Unexpected request URI")
-    //     }
-    // }
+    pub fn query(&self) -> Option<&str> {
+        match self.inner.uri {
+            RequestUri::AbsolutePath(ref s) => {
+                if let Some((_, opt_pos)) = self.delims.get() {
+                    opt_pos.map(|pos| &s[pos..] )
+                } else {
+                    let delims = s.find('?')
+                        .map(|pos| (pos, Some(pos + 1)))
+                        .unwrap_or((s.len(), None));
+                    self.delims.set(Some(delims));
+                    delims.1.map (|pos| &s[pos..] )
+                }
+            },
+            RequestUri::AbsoluteUri(ref url) => url.query(),
+            _ => panic!("Unexpected request URI")
+        }
+    }
+
+    pub fn captures(&self) -> Option<Captures> {
+        self.regex_match
+            .and_then(|x| x.captures(self.path()))
+            
+    }
+
+}
+
+pub trait InnerHandler: Send + Sync {
+    fn handle<'a, 'b, 'c>(&'a self, Request<'a, 'b, 'c>, Response<'a>);
+
+}
+
+impl<F> InnerHandler for F where F: Fn(Request, Response) + Sync + Send {
+    fn handle<'a, 'b, 'c>(&'a self, 
+        req: Request<'a, 'b, 'c>, 
+        res: Response<'a>) {
+        self(req, res)
+    }
 }
 
 impl Router {
@@ -102,7 +143,7 @@ impl Router {
 
 impl<'a> RouterBuilder<'a> {
 
-    pub fn not_found<H: Handler + 'static>(mut self, handler: H) -> Self {
+    pub fn not_found<H: InnerHandler + 'static>(mut self, handler: H) -> Self {
         self.not_found = Some(Box::new(handler));
         self
     }
@@ -123,26 +164,28 @@ macro_rules! impls {
                 $prefix_regexes: Option<Vec<Regex>>,
                 $prefix_handlers: Option<Vec<Box<InnerHandler>>>,
             )+
-            not_found: Box<Handler>
+            not_found: Box<InnerHandler>
         }
 
         unsafe impl Send for Router {}
         unsafe impl Sync for Router {}
 
         impl Handler for Router {
-            fn handle<'a, 'k>(&'a self, req: Request<'a, 'k>, res: Response<'a>) {
+            fn handle<'a, 'k>(&'a self, req: HyperRequest<'a, 'k>, res: Response<'a>) {
+                let req = Request::from(req);
                 match req.method {
                     $(
                         $he => {
                             if let Some(i) = self.$prefix_regex_set
                                 .iter()
-                                .flat_map(|s| s.matches(utils::extract_path(&req.uri)) )
+                                .flat_map(|s| s.matches(req.path()) )
                                 .next() {
                                 let handler = 
                                     &self.$prefix_handlers.as_ref().unwrap()[i];
                                 let regex = 
                                     &self.$prefix_regexes.as_ref().unwrap()[i];
-                                handler.handle(req, res, regex);
+                                let req = req.with_regex(regex);
+                                handler.handle(req, res);
                                 return;
                             }                                
                         },
@@ -153,33 +196,13 @@ macro_rules! impls {
             }
         }
 
-        // impl Router {
-
-        //     // pub fn find_handler(&self, req: &Request) -> Option<&Box<Fn(Request, Response)>> {
-        //     //     match req.method {
-        //     //         $(
-        //     //             $he => {
-        //     //                 self.$prefix_re_set
-        //     //                     .as_ref()
-        //     //                     .iter()
-        //     //                     .flat_map(|s| s.matches(Self::extract_path(&req.uri)))
-        //     //                     .map(|i| &self.$prefix_handlers.as_ref().unwrap()[i] )
-        //     //                     .next()
-        //     //             },
-        //     //         )+
-        //     //         _ => { None }
-        //     //     }
-        //     // }
-
-        // }
-
         #[derive(Default)]
         pub struct RouterBuilder<'a> {
             $(
                 $prefix_strs: Option<Vec<&'a str>>,
                 $prefix_handlers: Option<Vec<Box<InnerHandler>>>,
             )+
-            not_found: Option<Box<Handler>>
+            not_found: Option<Box<InnerHandler>>
         }
 
         impl<'a> RouterBuilder<'a> {
@@ -232,8 +255,7 @@ impls!{
     [put_regex_set, put_regexes, put_handlers, put_strs, Method::Put, add_put],
     [patch_regex_set, patch_regexes, patch_handlers, patch_strs, Method::Patch, add_patch],
     [delete_regex_set, delete_regexes, delete_handlers, delete_strs, Method::Delete, add_delete],
-    [head_regex_set, head_regexes, head_handlers, head_strs, Method::Head, add_head],
-    [options_regex_set, options_regexes, options_handlers, options_strs, Method::Options, add_options]
+    [head_regex_set, head_regexes, head_handlers, head_strs, Method::Head, add_head]
 }
 
 #[cfg(test)]
