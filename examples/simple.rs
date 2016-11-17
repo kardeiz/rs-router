@@ -9,13 +9,10 @@ use std::io::Read;
 
 use hyper::server::{Server, Request, Response, Handler};
 use regex::Regex;
-use rs_router::Router;
+use rs_router::{Router, utils as rs_utils};
 
-fn digit_handler(req: Request, res: Response) {
-    lazy_static! { 
-        static ref RE: Regex = Regex::new(r"/(\d+)").unwrap();
-    }
-    let digits = RE.captures(Router::extract_path(&req.uri))
+fn digit_handler(req: Request, res: Response, regex: &Regex) {
+    let digits = regex.captures(rs_utils::extract_path(&req.uri))
         .and_then(|c| c.at(1) )
         .unwrap();
     if digits.len() > 5 {
@@ -25,7 +22,7 @@ fn digit_handler(req: Request, res: Response) {
     }
 }
 
-fn body_handler(mut req: Request, res: Response) {
+fn body_handler(mut req: Request, res: Response, _: &Regex) {
     let mut body = String::new();
     let _ = req.read_to_string(&mut body);
     res.send(body.as_bytes()).unwrap();
@@ -58,18 +55,11 @@ fn main() {
     };
 
     let router = Router::build()
-        .add_get(r"/(\d+)", move |req, res| digit_handler(req, res) )
+        .add_get(r"/(\d+)", digit_handler)
         .add_post(r"/body", body_handler)
+        .not_found(not_found)
         .finish()
         .unwrap();
 
-    let handler = move |req: Request, mut res: Response| {
-        if let Some(m) = router.find_handler(&req) {
-            m(req, res);
-        } else {
-            not_found(req, res);
-        }
-    };
-
-    server.handle_threads(handler, 8 * ::num_cpus::get()).unwrap();
+    server.handle_threads(router, 8 * ::num_cpus::get()).unwrap();
 }

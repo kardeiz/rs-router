@@ -34,43 +34,66 @@ use regex::{Regex, RegexSet};
 use hyper::server::{Handler, Request, Response};
 use hyper::method::Method;
 
-pub struct UriParts<'a> {
-    pub path: &'a str,
-    pub query: Option<&'a str>
+// pub struct UriParts<'a> {
+//     pub path: &'a str,
+//     pub query: Option<&'a str>
+// }
+
+// impl<'a> UriParts<'a> {
+//     pub fn new(path: &'a str, query: Option<&'a str>) -> Self {
+//         UriParts { path: path, query: query }
+//     }
+// }
+
+// pub struct Route<'a> {
+//     uri_parts: UriParts<'a>,
+//     regex: &'a Regex
+// }
+
+pub trait InnerHandler: Send + Sync {
+    fn handle<'a, 'k>(&'a self, Request<'a, 'k>, Response<'a>, &'a Regex);
+
 }
 
-impl<'a> UriParts<'a> {
-    pub fn new(path: &'a str, query: Option<&'a str>) -> Self {
-        UriParts { path: path, query: query }
+impl<F> InnerHandler for F where F: for<'c> Fn(Request, Response, &'c Regex) + Sync + Send {
+    fn handle<'a, 'k>(&'a self, 
+        req: Request<'a, 'k>, 
+        res: Response<'a>,
+        regex: &'a Regex) {
+        self(req, res, regex)
     }
 }
-
-pub struct Route<'a> {
-    uri_parts: UriParts<'a>,
-    regex: &'a Regex
-}
-
 
 pub mod utils {
 
-    use super::UriParts;
+    // use super::UriParts;
     use hyper::uri::RequestUri;
 
-    pub fn extract_parts(uri: &RequestUri) -> UriParts {
-        match *uri {            
-            ::hyper::uri::RequestUri::AbsolutePath(ref s) => {                
-                if let Some(pos) = s.find('?') {
-                    UriParts::new(&s[..pos], Some(&s[pos+1..]))
-                } else {
-                    UriParts::new(&s[..], None)
-                }
+    pub fn extract_path(uri: &RequestUri) -> &str {
+        match *uri {
+            RequestUri::AbsolutePath(ref s) => {                
+                s.find('?').map(|pos| &s[..pos] ).unwrap_or(&s[..])
             },
-            ::hyper::uri::RequestUri::AbsoluteUri(ref url) => {
-                UriParts::new(url.path(), url.query())
-            },
+            RequestUri::AbsoluteUri(ref url) => url.path(),
             _ => panic!("Unexpected request URI")
         }
     }
+
+    // pub fn extract_parts(uri: &RequestUri) -> UriParts {
+    //     match *uri {            
+    //         ::hyper::uri::RequestUri::AbsolutePath(ref s) => {                
+    //             if let Some(pos) = s.find('?') {
+    //                 UriParts::new(&s[..pos], Some(&s[pos+1..]))
+    //             } else {
+    //                 UriParts::new(&s[..], None)
+    //             }
+    //         },
+    //         ::hyper::uri::RequestUri::AbsoluteUri(ref url) => {
+    //             UriParts::new(url.path(), url.query())
+    //         },
+    //         _ => panic!("Unexpected request URI")
+    //     }
+    // }
 }
 
 impl Router {
@@ -98,7 +121,7 @@ macro_rules! impls {
             $(
                 $prefix_regex_set: Option<RegexSet>,
                 $prefix_regexes: Option<Vec<Regex>>,
-                $prefix_handlers: Option<Vec<Box<Fn(Request, Response)>>>,
+                $prefix_handlers: Option<Vec<Box<InnerHandler>>>,
             )+
             not_found: Box<Handler>
         }
@@ -107,30 +130,26 @@ macro_rules! impls {
         unsafe impl Sync for Router {}
 
         impl Handler for Router {
-            fn handle(&self, req: Request, res: Response) {
-                let uri_parts = utils::extract_parts(&req.uri);
+            fn handle<'a, 'k>(&'a self, req: Request<'a, 'k>, res: Response<'a>) {
                 match req.method {
                     $(
                         $he => {
                             if let Some(i) = self.$prefix_regex_set
                                 .iter()
-                                .flat_map(|s| s.matches(uri_parts.path) )
+                                .flat_map(|s| s.matches(utils::extract_path(&req.uri)) )
                                 .next() {
                                 let handler = 
                                     &self.$prefix_handlers.as_ref().unwrap()[i];
                                 let regex = 
                                     &self.$prefix_regexes.as_ref().unwrap()[i];
-                                let route = Route {
-                                    uri_parts: uri_parts,
-                                    regex: regex
-                                };
-                                // handler.handle(req, res, route);
+                                handler.handle(req, res, regex);
+                                return;
                             }                                
                         },
                     )+
                     _ => { }
                 }
-                Handler::handle(*self.not_found, req, res)
+                self.not_found.handle(req, res)
             }
         }
 
@@ -158,7 +177,7 @@ macro_rules! impls {
         pub struct RouterBuilder<'a> {
             $(
                 $prefix_strs: Option<Vec<&'a str>>,
-                $prefix_handlers: Option<Vec<Box<Fn(Request, Response)>>>,
+                $prefix_handlers: Option<Vec<Box<InnerHandler>>>,
             )+
             not_found: Option<Box<Handler>>
         }
@@ -166,7 +185,7 @@ macro_rules! impls {
         impl<'a> RouterBuilder<'a> {
             $(
                 pub fn $add<B>(mut self, re: &'a str, handler: B) -> Self
-                    where B: Fn(Request, Response) + Send + Sync + 'static {
+                    where B: InnerHandler + 'static {
                     self.$prefix_strs = self.$prefix_strs.or(Some(Vec::new()));
                     self.$prefix_handlers = self.$prefix_handlers.or(Some(Vec::new()));
                     self.$prefix_strs.as_mut().unwrap().push(re);
