@@ -31,9 +31,6 @@ fn not_found(req: Request, res: Response) {
     let uri = format!("URI: {}", req.uri);
     let query = format!("QUERY: {:?}", req.query());
     let message = format!("why you calling {} {}?", uri, query);
-
-
-
     res.send(message.as_bytes()).unwrap();
 }
 
