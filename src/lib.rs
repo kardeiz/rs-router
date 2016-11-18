@@ -67,8 +67,7 @@ impl<'a, 'b: 'a, 'c> DerefMut for Request<'a, 'b, 'c> {
 
 impl<'a, 'b: 'a, 'c> From<HyperRequest<'a, 'b>> for Request<'a, 'b, 'c> {
 
-    fn from(x: HyperRequest<'a, 'b>) -> Self {
-        
+    fn from(x: HyperRequest<'a, 'b>) -> Self {        
         let path_delims = match x.uri {            
             ::hyper::uri::RequestUri::AbsolutePath(ref s) => {                
                 if let Some(pos) = s.find('?') {
@@ -89,7 +88,6 @@ impl<'a, 'b: 'a, 'c> From<HyperRequest<'a, 'b>> for Request<'a, 'b, 'c> {
             inner: x,
             extensions: extensions
         }
-
     }
 
 }
@@ -130,7 +128,6 @@ impl<'a, 'b: 'a, 'c> Request<'a, 'b, 'c> {
 
 pub trait InnerHandler: Send + Sync {
     fn handle<'a, 'b, 'c>(&'a self, Request<'a, 'b, 'c>, Response<'a>);
-
 }
 
 impl<F> InnerHandler for F where F: Fn(Request, Response) + Sync + Send {
@@ -146,12 +143,10 @@ impl Router {
 }
 
 impl<'a> RouterBuilder<'a> {
-
     pub fn not_found<H: InnerHandler + 'static>(mut self, handler: H) -> Self {
         self.not_found = Some(Box::new(handler));
         self
     }
-
 }
 
 macro_rules! impls {
