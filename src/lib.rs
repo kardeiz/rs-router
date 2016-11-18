@@ -38,13 +38,16 @@ use hyper::uri::RequestUri;
 
 use std::ops::{Deref, DerefMut};
 use std::convert::From;
-use std::cell::Cell;
+
+pub struct RequestExtensions<'a> {
+    path_delims: Option<(usize, Option<usize>)>,
+    regex_match: Option<&'a Regex>
+}
 
 
 pub struct Request<'a, 'b: 'a, 'c> {
     inner: HyperRequest<'a, 'b>,
-    delims: Cell<Option<(usize, Option<usize>)>>,
-    regex_match: Option<&'c Regex>
+    extensions: RequestExtensions<'c>
 }
 
 
@@ -65,33 +68,41 @@ impl<'a, 'b: 'a, 'c> DerefMut for Request<'a, 'b, 'c> {
 impl<'a, 'b: 'a, 'c> From<HyperRequest<'a, 'b>> for Request<'a, 'b, 'c> {
 
     fn from(x: HyperRequest<'a, 'b>) -> Self {
+        
+        let path_delims = match x.uri {            
+            ::hyper::uri::RequestUri::AbsolutePath(ref s) => {                
+                if let Some(pos) = s.find('?') {
+                    Some((pos, Some(pos+1)))
+                } else {
+                    Some((s.len(), None))
+                }
+            },
+            _ => None
+        };
+
+        let extensions = RequestExtensions {
+            path_delims: path_delims,
+            regex_match: None
+        };
+
         Request {
             inner: x,
-            delims: Cell::new(None),
-            regex_match: None
+            extensions: extensions
         }
+
     }
+
 }
 
 impl<'a, 'b: 'a, 'c> Request<'a, 'b, 'c> {
 
-    fn with_regex(mut self, regex: &'c Regex) -> Self {
-        self.regex_match = Some(regex);
-        self
-    }
-
     pub fn path(&self) -> &str {
         match self.inner.uri {
             RequestUri::AbsolutePath(ref s) => {
-                if let Some((pos, _)) = self.delims.get() {
-                    &s[..pos]
-                } else {
-                    let delims = s.find('?')
-                        .map(|pos| (pos, Some(pos + 1)))
-                        .unwrap_or((s.len(), None));
-                    self.delims.set(Some(delims));
-                    &s[..delims.0]
-                }
+                let pos = self.extensions.path_delims
+                    .map(|x| x.0)
+                    .expect("Path end delim must be set");
+                &s[..pos]
             },
             RequestUri::AbsoluteUri(ref url) => url.path(),
             _ => panic!("Unexpected request URI")
@@ -101,15 +112,9 @@ impl<'a, 'b: 'a, 'c> Request<'a, 'b, 'c> {
     pub fn query(&self) -> Option<&str> {
         match self.inner.uri {
             RequestUri::AbsolutePath(ref s) => {
-                if let Some((_, opt_pos)) = self.delims.get() {
-                    opt_pos.map(|pos| &s[pos..] )
-                } else {
-                    let delims = s.find('?')
-                        .map(|pos| (pos, Some(pos + 1)))
-                        .unwrap_or((s.len(), None));
-                    self.delims.set(Some(delims));
-                    delims.1.map (|pos| &s[pos..] )
-                }
+                self.extensions.path_delims
+                    .and_then(|x| x.1)
+                    .map(|pos| &s[pos..] )
             },
             RequestUri::AbsoluteUri(ref url) => url.query(),
             _ => panic!("Unexpected request URI")
@@ -117,7 +122,7 @@ impl<'a, 'b: 'a, 'c> Request<'a, 'b, 'c> {
     }
 
     pub fn captures(&self) -> Option<Captures> {
-        self.regex_match
+        self.extensions.regex_match
             .and_then(|x| x.captures(self.path()))
             
     }
@@ -172,7 +177,7 @@ macro_rules! impls {
 
         impl Handler for Router {
             fn handle<'a, 'k>(&'a self, req: HyperRequest<'a, 'k>, res: Response<'a>) {
-                let req = Request::from(req);
+                let mut req = Request::from(req);
                 match req.method {
                     $(
                         $he => {
@@ -184,7 +189,7 @@ macro_rules! impls {
                                     &self.$prefix_handlers.as_ref().unwrap()[i];
                                 let regex = 
                                     &self.$prefix_regexes.as_ref().unwrap()[i];
-                                let req = req.with_regex(regex);
+                                req.extensions.regex_match = Some(regex);
                                 handler.handle(req, res);
                                 return;
                             }                                
