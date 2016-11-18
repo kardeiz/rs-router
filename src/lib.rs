@@ -123,8 +123,7 @@ impl<'a, 'b: 'a, 'c> Request<'a, 'b, 'c> {
 
     pub fn captures(&self) -> Option<Captures> {
         self.extensions.regex_match
-            .and_then(|x| x.captures(self.path()))
-            
+            .and_then(|x| x.captures(self.path()))            
     }
 
 }
