@@ -27,6 +27,10 @@ fn body_handler(mut req: Request, res: Response) {
     res.send(body.as_bytes()).unwrap();
 }
 
+fn index(_: Request, res: Response) {
+    res.send(b"Hello, world!").unwrap();
+}
+
 fn not_found(req: Request, res: Response) {
     let uri = format!("URI: {}", req.uri);
     let query = format!("QUERY: {:?}", req.query());
@@ -55,8 +59,9 @@ fn main() {
     };
 
     let router = Router::build()
-        .add_get(r"\A/(\d+)\z", digit_handler)
-        .add_post(r"\A/body\z", body_handler)
+        .add_get(r"\A/\z", index)
+        // .add_get(r"\A/(\d+)\z", digit_handler)
+        // .add_post(r"\A/body\z", body_handler)
         .not_found(not_found)
         .finish()
         .unwrap();
