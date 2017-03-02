@@ -97,9 +97,8 @@ impl<'a, 'b: 'a, 'c> Request<'a, 'b, 'c> {
     pub fn path(&self) -> &str {
         match self.inner.uri {
             RequestUri::AbsolutePath(ref s) => {
-                let pos = self.extensions.path_delims
-                    .map(|x| x.0)
-                    .expect("Path end delim must be set");
+                let pos = 
+                    self.extensions.path_delims.unwrap().0;
                 &s[..pos]
             },
             RequestUri::AbsoluteUri(ref url) => url.path(),
@@ -110,8 +109,7 @@ impl<'a, 'b: 'a, 'c> Request<'a, 'b, 'c> {
     pub fn query(&self) -> Option<&str> {
         match self.inner.uri {
             RequestUri::AbsolutePath(ref s) => {
-                self.extensions.path_delims
-                    .and_then(|x| x.1)
+                self.extensions.path_delims.unwrap().1
                     .map(|pos| &s[pos..] )
             },
             RequestUri::AbsoluteUri(ref url) => url.query(),
