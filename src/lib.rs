@@ -9,12 +9,16 @@ extern crate lazy_static;
 #[macro_use]
 extern crate quick_error;
 
+#[macro_use]
+extern crate log;
+
 pub mod err {
     quick_error! {
         #[derive(Debug)]
         pub enum Error {
             Other(err: Box<::std::error::Error + Send + Sync>) {
                 from(e: &'static str) -> (e.into())
+                from(e: ::std::io::Error) -> (e.into())
                 description(err.description())
                 display("{}", err)
             }
@@ -31,13 +35,16 @@ pub mod err {
 
 use regex::{Regex, RegexSet, Captures};
 
-use hyper::server::{Handler, Response, Request as HyperRequest};
+use hyper::server::{Handler, Response as HyperResponse, Request as HyperRequest};
 use hyper::method::Method;
 use hyper::uri::RequestUri;
-
+use hyper::status::StatusCode;
+use hyper::header::{self, Headers};
+use hyper::net::Fresh;
 
 use std::ops::{Deref, DerefMut};
 use std::convert::From;
+use std::io::Write;
 
 pub struct RequestExtensions<'a> {
     path_delims: Option<(usize, Option<usize>)>,
@@ -124,27 +131,98 @@ impl<'a, 'b: 'a, 'c> Request<'a, 'b, 'c> {
 
 }
 
-pub trait InnerHandler: Send + Sync {
-    fn handle<'a, 'b, 'c>(&'a self, Request<'a, 'b, 'c>, Response<'a>);
+pub trait WriteBody: Send {
+    fn write_body(&mut self, res: &mut Write) -> ::std::io::Result<()>;
 }
 
-impl<F> InnerHandler for F where F: Fn(Request, Response) + Sync + Send {
-    fn handle<'a, 'b, 'c>(&'a self, 
-        req: Request<'a, 'b, 'c>, 
-        res: Response<'a>) {
-        self(req, res)
+impl WriteBody for Vec<u8> {
+    fn write_body(&mut self, res: &mut Write) -> ::std::io::Result<()> {
+        self.as_slice().write_body(res)
+    }
+}
+
+impl<'a> WriteBody for &'a [u8] {
+    fn write_body(&mut self, res: &mut Write) -> ::std::io::Result<()> {
+        res.write_all(self)
+    }
+}
+
+impl WriteBody for String {
+    fn write_body(&mut self, res: &mut Write) -> ::std::io::Result<()> {
+        self.as_bytes().write_body(res)
+    }
+}
+
+impl WriteBody for ::std::fs::File {
+    fn write_body(&mut self, res: &mut Write) -> ::std::io::Result<()> {
+        ::std::io::copy(self, res).map(|_| ())
+    }
+}
+
+pub struct Response {
+    pub status: Option<StatusCode>,
+    pub headers: Headers,
+    pub body: Option<Box<WriteBody>>
+}
+
+impl Response {
+
+    pub fn not_found() -> Self {
+        Response {
+            status: Some(StatusCode::NotFound),
+            headers: Headers::new(),
+            body: Some(Box::new(b"Route not found".as_ref()))
+        }
+    }
+
+    pub fn new() -> Self {
+        Response {
+            status: None,
+            headers: Headers::new(),
+            body: None
+        }
+    }
+
+    pub fn write_back(self, mut res: HyperResponse<Fresh>) {
+
+        fn write_body(mut res: HyperResponse<Fresh>, body: Option<Box<WriteBody>>) 
+            -> ::std::io::Result<()> {
+            match body {
+                Some(mut b) => {
+                    let mut raw = res.start()?;
+                    b.write_body(&mut raw)?;
+                    Ok(raw.end()?)
+                },
+                None => {
+                    res.headers_mut().set(header::ContentLength(0));
+                    Ok(res.start()?.end()?)
+                }
+            }
+        }
+
+        *res.headers_mut() = self.headers;
+        *res.status_mut() = self.status.unwrap_or(StatusCode::Ok);
+        let out = write_body(res, self.body);
+
+        if let Err(e) = out {
+            error!("Error writing response: {}", e);
+        }
+    }
+
+}
+
+pub trait InnerHandler: Send + Sync {
+    fn handle<'a, 'b, 'c>(&'a self, Request<'a, 'b, 'c>) -> Response;
+}
+
+impl<F, E> InnerHandler for F where E: Into<Response>, F: Fn(Request) -> Result<Response, E> + Sync + Send {
+    fn handle<'a, 'b, 'c>(&'a self, req: Request<'a, 'b, 'c>) -> Response {
+        self(req).unwrap_or_else(|e| e.into() )
     }
 }
 
 impl Router {
      pub fn build<'a>() -> RouterBuilder<'a> { RouterBuilder::default() }
-}
-
-impl<'a> RouterBuilder<'a> {
-    pub fn not_found<H: InnerHandler + 'static>(mut self, handler: H) -> Self {
-        self.not_found = Some(Box::new(handler));
-        self
-    }
 }
 
 macro_rules! impls {
@@ -161,15 +239,15 @@ macro_rules! impls {
                 $prefix_regexes: Option<Vec<Regex>>,
                 $prefix_handlers: Option<Vec<Box<InnerHandler>>>,
             )+
-            not_found: Box<InnerHandler>
         }
 
         unsafe impl Send for Router {}
         unsafe impl Sync for Router {}
 
         impl Handler for Router {
-            fn handle<'a, 'k>(&'a self, req: HyperRequest<'a, 'k>, res: Response<'a>) {
+            fn handle<'a, 'k>(&'a self, req: HyperRequest<'a, 'k>, res: HyperResponse<'a>) {
                 let mut req = Request::from(req);
+                let mut inner_res = None;
                 match req.method {
                     $(
                         $he => {
@@ -182,14 +260,15 @@ macro_rules! impls {
                                 let regex = 
                                     &self.$prefix_regexes.as_ref().unwrap()[i];
                                 req.extensions.regex_match = Some(regex);
-                                handler.handle(req, res);
-                                return;
+                                inner_res = Some(handler.handle(req));
                             }                                
                         },
                     )+
                     _ => { }
                 }
-                self.not_found.handle(req, res)
+                inner_res
+                    .unwrap_or_else(Response::not_found)
+                    .write_back(res);
             }
         }
 
@@ -199,7 +278,6 @@ macro_rules! impls {
                 $prefix_strs: Option<Vec<&'a str>>,
                 $prefix_handlers: Option<Vec<Box<InnerHandler>>>,
             )+
-            not_found: Option<Box<InnerHandler>>
         }
 
         impl<'a> RouterBuilder<'a> {
@@ -238,7 +316,6 @@ macro_rules! impls {
                         $prefix_regexes: $prefix_regexes,
                         $prefix_handlers: self.$prefix_handlers,
                     )+
-                    not_found: self.not_found.ok_or("Must include not found")?
                 };
                 Ok(out)
             }

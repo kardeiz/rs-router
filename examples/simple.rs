@@ -7,35 +7,63 @@ extern crate lazy_static;
 
 use std::io::Read;
 
-use hyper::server::{Server, Response};
-use rs_router::{Router, Request};
+use hyper::server::{Server};
+use rs_router::{Router, Request, Response};
 
-fn digit_handler(req: Request, res: Response) {
-    let digits = req.captures()
-        .and_then(|c| c.at(1) )
-        .unwrap();
-    if digits.len() > 5 {
-        res.send(b"a big number!").unwrap();
-    } else {
-        res.send(b"not a big number").unwrap();
+// fn digit_handler(req: Request, res: Response) {
+//     let digits = req.captures()
+//         .and_then(|c| c.at(1) )
+//         .unwrap();
+//     if digits.len() > 5 {
+//         res.send(b"a big number!").unwrap();
+//     } else {
+//         res.send(b"not a big number").unwrap();
+//     }
+// }
+
+// fn body_handler(mut req: Request, res: Response) {
+//     let mut body = String::new();
+//     let _ = req.read_to_string(&mut body);
+//     res.send(body.as_bytes()).unwrap();
+// }
+
+lazy_static! {
+    static ref FOO_BAR: String = String::from("YES! FOO!");
+}
+
+pub enum Error {
+    Warning(&'static str)
+}
+
+impl From<&'static str> for Error {
+    fn from(t: &'static str) -> Error {
+        Error::Warning(t)
     }
 }
 
-fn body_handler(mut req: Request, res: Response) {
-    let mut body = String::new();
-    let _ = req.read_to_string(&mut body);
-    res.send(body.as_bytes()).unwrap();
+impl From<Error> for Response {
+    fn from(t: Error) -> Response {
+        match t {
+            Error::Warning(msg) => {
+                let mut out = Response::new();
+                out.body = Some(Box::new(msg.as_bytes() as &[u8]));
+                out
+            }
+        }        
+    }
+
 }
 
-fn index(_: Request, res: Response) {
-    res.send(b"Hello, world!").unwrap();
-}
 
-fn not_found(req: Request, res: Response) {
-    let uri = format!("URI: {}", req.uri);
-    let query = format!("QUERY: {:?}", req.query());
-    let message = format!("why you calling {} {}?", uri, query);
-    res.send(message.as_bytes()).unwrap();
+fn index(req: Request) -> Result<Response, Error> {
+    if req.path() == "/foo" {
+        let mut out = Response::new();
+        out.status = Some(::hyper::status::StatusCode::Ok);
+        out.body = Some(Box::new("FOO BAR".to_string()));
+        Ok(out)
+    } else {
+        Err("Bad query".into())
+    }
 }
 
 fn main() {
@@ -59,10 +87,9 @@ fn main() {
     };
 
     let router = Router::build()
-        .add_get(r"\A/\z", index)
+        .add_get(r"\A/.*\z", index)
         // .add_get(r"\A/(\d+)\z", digit_handler)
         // .add_post(r"\A/body\z", body_handler)
-        .not_found(not_found)
         .finish()
         .unwrap();
 
