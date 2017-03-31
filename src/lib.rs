@@ -4,9 +4,6 @@ extern crate regex;
 extern crate hyper;
 
 #[macro_use]
-extern crate lazy_static;
-
-#[macro_use]
 extern crate quick_error;
 
 #[macro_use]
@@ -21,6 +18,10 @@ pub mod err {
                 from(e: ::std::io::Error) -> (e.into())
                 description(err.description())
                 display("{}", err)
+            }
+            NotFoundNotSet {
+                description("Did not set not_found handler")
+                display("{}", "Did not set not_found handler")
             }
             Regex(err: ::regex::Error) {
                 from()
@@ -167,14 +168,6 @@ pub struct Response {
 
 impl Response {
 
-    pub fn not_found() -> Self {
-        Response {
-            status: Some(StatusCode::NotFound),
-            headers: Headers::new(),
-            body: Some(Box::new(b"Route not found".as_ref()))
-        }
-    }
-
     pub fn new() -> Self {
         Response {
             status: None,
@@ -202,9 +195,8 @@ impl Response {
 
         *res.headers_mut() = self.headers;
         *res.status_mut() = self.status.unwrap_or(StatusCode::Ok);
-        let out = write_body(res, self.body);
-
-        if let Err(e) = out {
+        
+        if let Err(e) = write_body(res, self.body) {
             error!("Error writing response: {}", e);
         }
     }
@@ -222,23 +214,34 @@ impl<F, E> InnerHandler for F where E: Into<Response>, F: Fn(Request) -> Result<
 }
 
 impl Router {
-     pub fn build<'a>() -> RouterBuilder<'a> { RouterBuilder::default() }
+    pub fn build<'a>() -> RouterBuilder<'a> { RouterBuilder::default() }
+}
+
+impl<'a> RouterBuilder<'a> {
+    pub fn add_not_found<B>(mut self, handler: B) -> Self where B: InnerHandler + 'static {
+        self.not_found = Some(Box::new(handler));
+        self
+    }
 }
 
 macro_rules! impls {
     ($([$prefix_regex_set:ident, 
         $prefix_regexes:ident, 
+        $prefix_priorities:ident, 
         $prefix_handlers:ident, 
         $prefix_strs:ident, 
         $he:pat, 
-        $add:ident]),+) => {
+        $add:ident,
+        $add_priority:ident]),+) => {
         
         pub struct Router {
             $(
                 $prefix_regex_set: Option<RegexSet>,
                 $prefix_regexes: Option<Vec<Regex>>,
+                $prefix_priorities: Option<Vec<usize>>,
                 $prefix_handlers: Option<Vec<Box<InnerHandler>>>,
             )+
+            not_found: Box<InnerHandler>
         }
 
         unsafe impl Send for Router {}
@@ -247,28 +250,28 @@ macro_rules! impls {
         impl Handler for Router {
             fn handle<'a, 'k>(&'a self, req: HyperRequest<'a, 'k>, res: HyperResponse<'a>) {
                 let mut req = Request::from(req);
-                let mut inner_res = None;
                 match req.method {
                     $(
                         $he => {
                             if let Some(i) = self.$prefix_regex_set
                                 .iter()
                                 .flat_map(|s| s.matches(req.path()) )
-                                .next() {
+                                .min_by(|x, y| 
+                                    (&self.$prefix_priorities.as_ref().unwrap()[*x])
+                                        .cmp(&self.$prefix_priorities.as_ref().unwrap()[*y])
+                                ) {
                                 let handler = 
                                     &self.$prefix_handlers.as_ref().unwrap()[i];
                                 let regex = 
                                     &self.$prefix_regexes.as_ref().unwrap()[i];
                                 req.extensions.regex_match = Some(regex);
-                                inner_res = Some(handler.handle(req));
+                                return handler.handle(req).write_back(res);
                             }                                
                         },
                     )+
                     _ => { }
                 }
-                inner_res
-                    .unwrap_or_else(Response::not_found)
-                    .write_back(res);
+                self.not_found.handle(req).write_back(res);
             }
         }
 
@@ -276,8 +279,10 @@ macro_rules! impls {
         pub struct RouterBuilder<'a> {
             $(
                 $prefix_strs: Option<Vec<&'a str>>,
+                $prefix_priorities: Option<Vec<usize>>,
                 $prefix_handlers: Option<Vec<Box<InnerHandler>>>,
             )+
+            not_found: Option<Box<InnerHandler>>
         }
 
         impl<'a> RouterBuilder<'a> {
@@ -286,8 +291,25 @@ macro_rules! impls {
                     where B: InnerHandler + 'static {
                     self.$prefix_strs = self.$prefix_strs.or(Some(Vec::new()));
                     self.$prefix_handlers = self.$prefix_handlers.or(Some(Vec::new()));
+                    self.$prefix_priorities = self.$prefix_priorities.or(Some(Vec::new()));
+                    
                     self.$prefix_strs.as_mut().unwrap().push(re);
                     self.$prefix_handlers.as_mut().unwrap().push(Box::new(handler));
+                    self.$prefix_priorities.as_mut().unwrap().push(0);
+                    self
+                }
+            )+
+
+            $(
+                pub fn $add_priority<B>(mut self, re: &'a str, priority: usize, handler: B) -> Self
+                    where B: InnerHandler + 'static {
+                    self.$prefix_strs = self.$prefix_strs.or(Some(Vec::new()));
+                    self.$prefix_handlers = self.$prefix_handlers.or(Some(Vec::new()));
+                    self.$prefix_priorities = self.$prefix_priorities.or(Some(Vec::new()));
+                    
+                    self.$prefix_strs.as_mut().unwrap().push(re);
+                    self.$prefix_handlers.as_mut().unwrap().push(Box::new(handler));
+                    self.$prefix_priorities.as_mut().unwrap().push(priority);
                     self
                 }
             )+
@@ -315,7 +337,9 @@ macro_rules! impls {
                         $prefix_regex_set: $prefix_regex_set,
                         $prefix_regexes: $prefix_regexes,
                         $prefix_handlers: self.$prefix_handlers,
+                        $prefix_priorities: self.$prefix_priorities,
                     )+
+                    not_found: self.not_found.ok_or(err::Error::NotFoundNotSet)?
                 };
                 Ok(out)
             }
@@ -324,12 +348,12 @@ macro_rules! impls {
 }
 
 impls!{
-    [get_regex_set, get_regexes, get_handlers, get_strs, Method::Get, add_get],
-    [post_regex_set, post_regexes, post_handlers, post_strs, Method::Post, add_post],
-    [put_regex_set, put_regexes, put_handlers, put_strs, Method::Put, add_put],
-    [patch_regex_set, patch_regexes, patch_handlers, patch_strs, Method::Patch, add_patch],
-    [delete_regex_set, delete_regexes, delete_handlers, delete_strs, Method::Delete, add_delete],
-    [head_regex_set, head_regexes, head_handlers, head_strs, Method::Head, add_head]
+    [get_regex_set, get_regexes, get_priorities, get_handlers, get_strs, Method::Get, add_get, add_get_with_priority],
+    [post_regex_set, post_regexes, post_priorities, post_handlers, post_strs, Method::Post, add_post, add_post_with_priority],
+    [put_regex_set, put_regexes, put_priorities, put_handlers, put_strs, Method::Put, add_put, add_put_with_priority],
+    [patch_regex_set, patch_regexes, patch_priorities, patch_handlers, patch_strs, Method::Patch, add_patch, add_patch_with_priority],
+    [delete_regex_set, delete_regexes, delete_priorities, delete_handlers, delete_strs, Method::Delete, add_delete, add_delete_with_priority],
+    [head_regex_set, head_regexes, head_priorities, head_handlers, head_strs, Method::Head, add_head, add_head_with_priority]
 }
 
 #[cfg(test)]
