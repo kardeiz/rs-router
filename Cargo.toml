@@ -4,6 +4,7 @@ name = "rs-router"
 version = "0.1.1"
 keywords = ["hyper", "router", "regexset"]
 description = "A RegexSet based path router for Hyper"
+repository = "https://github.com/kardeiz/rs-router"
 
 [dependencies]
 hyper = "0.10"
