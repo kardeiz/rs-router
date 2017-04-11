@@ -154,6 +154,12 @@ impl WriteBody for String {
     }
 }
 
+impl<'a> WriteBody for &'a str {
+    fn write_body(&mut self, res: &mut Write) -> ::std::io::Result<()> {
+        self.as_bytes().write_body(res)
+    }
+}
+
 impl WriteBody for ::std::fs::File {
     fn write_body(&mut self, res: &mut Write) -> ::std::io::Result<()> {
         ::std::io::copy(self, res).map(|_| ())
@@ -217,6 +223,9 @@ impl Router {
     pub fn build<'a>() -> RouterBuilder<'a> { RouterBuilder::default() }
 }
 
+unsafe impl Send for Router {}
+unsafe impl Sync for Router {}
+
 impl<'a> RouterBuilder<'a> {
     pub fn add_not_found<B>(mut self, handler: B) -> Self where B: InnerHandler + 'static {
         self.not_found = Some(Box::new(handler));
@@ -243,9 +252,6 @@ macro_rules! impls {
             )+
             not_found: Box<InnerHandler>
         }
-
-        unsafe impl Send for Router {}
-        unsafe impl Sync for Router {}
 
         impl Handler for Router {
             fn handle<'a, 'k>(&'a self, req: HyperRequest<'a, 'k>, res: HyperResponse<'a>) {

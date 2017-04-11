@@ -10,25 +10,24 @@ use std::io::Read;
 use hyper::server::{Server};
 use rs_router::{Router, Request, Response};
 
-// fn digit_handler(req: Request, res: Response) {
-//     let digits = req.captures()
-//         .and_then(|c| c.at(1) )
-//         .unwrap();
-//     if digits.len() > 5 {
-//         res.send(b"a big number!").unwrap();
-//     } else {
-//         res.send(b"not a big number").unwrap();
-//     }
-// }
+fn digit_handler(req: Request) -> Result<Response, Error> {
+    let digits = req.captures()
+        .and_then(|c| c.get(1) )
+        .map(|x| x.as_str() )
+        .unwrap();
+    let mut out = Response::new();
+    let msg = format!("Requested digits: {}", digits);
+    out.body = Some(Box::new(msg));
+    Ok(out)
+}
 
-// fn body_handler(mut req: Request, res: Response) {
-//     let mut body = String::new();
-//     let _ = req.read_to_string(&mut body);
-//     res.send(body.as_bytes()).unwrap();
-// }
-
-lazy_static! {
-    static ref FOO_BAR: String = String::from("YES! FOO!");
+fn body_handler(mut req: Request) -> Result<Response, Error>{
+    let mut out = Response::new();
+    let mut msg = String::new();
+    let _ = req.read_to_string(&mut msg);
+    out.body = Some(Box::new(msg));
+    Ok(out)
+    
 }
 
 pub enum Error {
@@ -46,24 +45,25 @@ impl From<Error> for Response {
         match t {
             Error::Warning(msg) => {
                 let mut out = Response::new();
-                out.body = Some(Box::new(msg.as_bytes() as &[u8]));
+                out.body = Some(Box::new(msg));
                 out
             }
         }        
     }
-
 }
 
 
 fn index(req: Request) -> Result<Response, Error> {
-    if req.path() == "/foo" {
-        let mut out = Response::new();
-        out.status = Some(::hyper::status::StatusCode::Ok);
-        out.body = Some(Box::new("FOO BAR".to_string()));
-        Ok(out)
-    } else {
-        Err("Bad query".into())
-    }
+    let mut out = Response::new();
+    out.body = Some(Box::new("Requested /"));
+    Ok(out)
+}
+
+fn not_found(req: Request) -> Result<Response, Error> {
+    let mut out = Response::new();
+    let msg = format!("Requested path: {}, but no handler found", req.path());
+    out.body = Some(Box::new(msg));
+    Ok(out)
 }
 
 fn main() {
@@ -87,9 +87,10 @@ fn main() {
     };
 
     let router = Router::build()
-        .add_get(r"\A/.*\z", index)
-        // .add_get(r"\A/(\d+)\z", digit_handler)
-        // .add_post(r"\A/body\z", body_handler)
+        .add_get(r"\A/\z", index)
+        .add_get(r"\A/(\d+)\z", digit_handler)
+        .add_post(r"\A/body\z", body_handler)
+        .add_not_found(not_found)
         .finish()
         .unwrap();
 
