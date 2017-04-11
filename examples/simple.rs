@@ -47,6 +47,13 @@ fn maybe_digits_handler(req: Request) -> Result<Response, Error> {
     Ok(out)
 }
 
+fn maybe_handler(req: Request) -> Result<Response, Error> {
+    let mut out = Response::new();
+    let msg = "Matched /maybe*, but not /maybe_digits/*";
+    out.body = Some(Box::new(msg));
+    Ok(out)
+}
+
 fn digit_handler(req: Request) -> Result<Response, Error> {
     let digits = req.captures()
         .and_then(|c| c.get(1) )
@@ -104,6 +111,9 @@ fn main() {
         .add_get(r"\A/\z", index)
         .add_get(r"\A/(\d+)\z", digit_handler)
         .add_get(r"\A/maybe_digits/(.+)\z", maybe_digits_handler)
+        // Multiple regexes may match path; use `*_with_priority` to specify priority
+        // Priority closest to 0 is prioritized
+        .add_get_with_priority(r"\A/maybe(.+)\z", 1, maybe_handler)
         .add_post(r"\A/body\z", body_handler)
         .add_not_found(not_found)
         .finish()

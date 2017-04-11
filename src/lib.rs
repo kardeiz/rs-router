@@ -361,10 +361,3 @@ impls!{
     [delete_regex_set, delete_regexes, delete_priorities, delete_handlers, delete_strs, Method::Delete, add_delete, add_delete_with_priority],
     [head_regex_set, head_regexes, head_priorities, head_handlers, head_strs, Method::Head, add_head, add_head_with_priority]
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-    }
-}
