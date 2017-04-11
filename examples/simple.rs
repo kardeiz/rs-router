@@ -10,6 +10,43 @@ use std::io::Read;
 use hyper::server::{Server};
 use rs_router::{Router, Request, Response};
 
+pub enum Error {
+    Warning(&'static str)
+}
+
+impl From<&'static str> for Error {
+    fn from(t: &'static str) -> Error {
+        Error::Warning(t)
+    }
+}
+
+impl From<Error> for Response {
+    fn from(t: Error) -> Response {
+        match t {
+            Error::Warning(msg) => {
+                let mut out = Response::new();
+                out.status = Some(::hyper::status::StatusCode::BadRequest);
+                out.body = Some(Box::new(msg));
+                out
+            }
+        }        
+    }
+}
+
+fn maybe_digits_handler(req: Request) -> Result<Response, Error> {
+    let digits: u64 = req.captures()
+        .and_then(|c| c.get(1) )
+        .map(|x| x.as_str() )
+        .unwrap()
+        .parse()
+        .map_err(|_| "Could not parse as u64")?;
+
+    let mut out = Response::new();
+    let msg = format!("Requested digits: {}", digits);
+    out.body = Some(Box::new(msg));
+    Ok(out)
+}
+
 fn digit_handler(req: Request) -> Result<Response, Error> {
     let digits = req.captures()
         .and_then(|c| c.get(1) )
@@ -26,34 +63,10 @@ fn body_handler(mut req: Request) -> Result<Response, Error>{
     let mut msg = String::new();
     let _ = req.read_to_string(&mut msg);
     out.body = Some(Box::new(msg));
-    Ok(out)
-    
+    Ok(out)    
 }
 
-pub enum Error {
-    Warning(&'static str)
-}
-
-impl From<&'static str> for Error {
-    fn from(t: &'static str) -> Error {
-        Error::Warning(t)
-    }
-}
-
-impl From<Error> for Response {
-    fn from(t: Error) -> Response {
-        match t {
-            Error::Warning(msg) => {
-                let mut out = Response::new();
-                out.body = Some(Box::new(msg));
-                out
-            }
-        }        
-    }
-}
-
-
-fn index(req: Request) -> Result<Response, Error> {
+fn index(_: Request) -> Result<Response, Error> {
     let mut out = Response::new();
     out.body = Some(Box::new("Requested /"));
     Ok(out)
@@ -61,6 +74,7 @@ fn index(req: Request) -> Result<Response, Error> {
 
 fn not_found(req: Request) -> Result<Response, Error> {
     let mut out = Response::new();
+    out.status = Some(::hyper::status::StatusCode::NotFound);
     let msg = format!("Requested path: {}, but no handler found", req.path());
     out.body = Some(Box::new(msg));
     Ok(out)
@@ -89,6 +103,7 @@ fn main() {
     let router = Router::build()
         .add_get(r"\A/\z", index)
         .add_get(r"\A/(\d+)\z", digit_handler)
+        .add_get(r"\A/maybe_digits/(.+)\z", maybe_digits_handler)
         .add_post(r"\A/body\z", body_handler)
         .add_not_found(not_found)
         .finish()
