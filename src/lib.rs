@@ -17,10 +17,7 @@ extern crate lazy_static;
 extern crate conduit_mime_types;
 
 #[cfg(feature="extensions")]
-mod extensions;
-
-#[cfg(feature="extensions")]
-pub use extensions::*;
+pub mod extensions;
 
 pub mod err {
     quick_error! {
