@@ -9,6 +9,19 @@ extern crate quick_error;
 #[macro_use]
 extern crate log;
 
+#[cfg(feature="extensions")]
+#[macro_use]
+extern crate lazy_static;
+
+#[cfg(feature="extensions")]
+extern crate conduit_mime_types;
+
+#[cfg(feature="extensions")]
+mod extensions;
+
+#[cfg(feature="extensions")]
+pub use extensions::*;
+
 pub mod err {
     quick_error! {
         #[derive(Debug)]
@@ -18,7 +31,7 @@ pub mod err {
                 from(e: ::std::io::Error) -> (e.into())
                 description(err.description())
                 display("{}", err)
-            }
+            }            
             NotFoundNotSet {
                 description("Did not set not_found handler")
                 display("{}", "Did not set not_found handler")

@@ -1,18 +1,27 @@
 [package]
 authors = ["Jacob Brown <kardeiz@gmail.com>"]
-name = "rs-router"
-version = "0.1.1"
-keywords = ["hyper", "router", "regexset"]
 description = "A RegexSet based path router for Hyper"
-repository = "https://github.com/kardeiz/rs-router"
+keywords = ["hyper", "router", "regexset"]
 license = "MIT"
+name = "rs-router"
+repository = "https://github.com/kardeiz/rs-router"
+version = "0.1.1"
 
 [dependencies]
+conduit-mime-types = { version = "0.7.3", optional = true }
 hyper = "0.10"
 log = "0.3.6"
 quick-error = "1.1.0"
 regex = "0.2"
 
+[dependencies.lazy_static]
+optional = true
+version = "0.2.1"
+
 [dev-dependencies]
 lazy_static = "0.2.1"
 num_cpus = "1.1.0"
+
+[features]
+default = []
+extensions = ["lazy_static", "conduit-mime-types"]
