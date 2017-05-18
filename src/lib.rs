@@ -1,10 +1,8 @@
-// #![feature(question_mark)]
-
 extern crate regex;
 extern crate hyper;
 
 #[macro_use]
-extern crate quick_error;
+extern crate error_chain;
 
 #[macro_use]
 extern crate log;
@@ -20,28 +18,21 @@ extern crate conduit_mime_types;
 pub mod extensions;
 
 pub mod err {
-    quick_error! {
-        #[derive(Debug)]
-        pub enum Error {
-            Other(err: Box<::std::error::Error + Send + Sync>) {
-                from(e: &'static str) -> (e.into())
-                from(e: ::std::io::Error) -> (e.into())
-                description(err.description())
-                display("{}", err)
-            }            
+    error_chain! {
+        errors {
             NotFoundNotSet {
                 description("Did not set not_found handler")
-                display("{}", "Did not set not_found handler")
             }
-            Regex(err: ::regex::Error) {
-                from()
-                description("Regex error")
-                display("{}", err)
-                cause(err)
-            }            
+            CapturesIssue {
+                description("Issue parsing captures")
+            }
+        }
+
+        foreign_links {
+            Io(::std::io::Error);
+            Regex(::regex::Error);
         }
     }
-    pub type Result<T> = ::std::result::Result<T, Error>;
 }
 
 use regex::{Regex, RegexSet, Captures};
@@ -355,7 +346,7 @@ macro_rules! impls {
                         $prefix_handlers: self.$prefix_handlers,
                         $prefix_priorities: self.$prefix_priorities,
                     )+
-                    not_found: self.not_found.ok_or(err::Error::NotFoundNotSet)?
+                    not_found: self.not_found.ok_or(err::ErrorKind::NotFoundNotSet)?
                 };
                 Ok(out)
             }

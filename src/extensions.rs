@@ -104,33 +104,33 @@ pub trait CaptureExtraction: Sized {
 
 impl<T> CaptureExtraction for (T,) where T: FromStr {
     fn extract_captures(req: &Request) -> Result<Self, Error> {
-        let caps = req.captures().ok_or("No captures")?;
+        let caps = req.captures().ok_or(::err::ErrorKind::CapturesIssue)?;
         let out_1 = caps.get(1).map(|x| x.as_str() ).and_then(|x| x.parse().ok())
-            .ok_or("Couldn't parse capture")?;
+            .ok_or(::err::ErrorKind::CapturesIssue)?;
         Ok((out_1,))
     }
 }
 
 impl<T1, T2> CaptureExtraction for (T1, T2) where T1: FromStr, T2: FromStr {
     fn extract_captures(req: &Request) -> Result<Self, Error> {
-        let caps = req.captures().ok_or("No captures")?;
+        let caps = req.captures().ok_or(::err::ErrorKind::CapturesIssue)?;
         let out_1 = caps.get(1).map(|x| x.as_str() ).and_then(|x| x.parse().ok())
-            .ok_or("Couldn't parse capture")?;
+            .ok_or(::err::ErrorKind::CapturesIssue)?;
         let out_2 = caps.get(2).map(|x| x.as_str() ).and_then(|x| x.parse().ok())
-            .ok_or("Couldn't parse capture")?;
+            .ok_or(::err::ErrorKind::CapturesIssue)?;
         Ok((out_1, out_2))
     }
 }
 
 impl<T1, T2, T3> CaptureExtraction for (T1, T2, T3) where T1: FromStr, T2: FromStr, T3: FromStr {
     fn extract_captures(req: &Request) -> Result<Self, Error> {
-        let caps = req.captures().ok_or("No captures")?;
+        let caps = req.captures().ok_or(::err::ErrorKind::CapturesIssue)?;
         let out_1 = caps.get(1).map(|x| x.as_str() ).and_then(|x| x.parse().ok())
-            .ok_or("Couldn't parse capture")?;
+            .ok_or(::err::ErrorKind::CapturesIssue)?;
         let out_2 = caps.get(2).map(|x| x.as_str() ).and_then(|x| x.parse().ok())
-            .ok_or("Couldn't parse capture")?;
+            .ok_or(::err::ErrorKind::CapturesIssue)?;
         let out_3 = caps.get(3).map(|x| x.as_str() ).and_then(|x| x.parse().ok())
-            .ok_or("Couldn't parse capture")?;
+            .ok_or(::err::ErrorKind::CapturesIssue)?;
         Ok((out_1, out_2, out_3))
     }
 }
